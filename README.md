@@ -1,7 +1,3 @@
-Yes. I reviewed the README you attached and consolidated the duplicated setup sections, removed the confusing teammate message, put the setup in the order a new person should actually follow, and kept the exact model/class information and tested configuration from your current package. 
-
-Replace the entire contents of `README.md` with this:
-
 ````markdown
 # SANKET ML
 
