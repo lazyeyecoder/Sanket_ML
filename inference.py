@@ -73,6 +73,37 @@ def load_model(model_path):
 
 
 # ============================================================
+# MODEL CACHE
+# ============================================================
+# Loading a YOLOv5 model via torch.hub is expensive (seconds).
+# The CLI below only ever predicts once per process, so it never
+# needed a cache. A long-lived service (see service/app.py) calls
+# predict() many times, so we cache the loaded model per model_type
+# and reuse it — this does not change model weights or behavior,
+# only how often load_model() runs.
+
+_model_cache = {}
+
+
+def get_model(model_type):
+
+    if model_type in _model_cache:
+        return _model_cache[model_type]
+
+    if model_type == "burn":
+        model = load_model(BURN_MODEL)
+    elif model_type == "wound":
+        model = load_model(WOUND_MODEL)
+    else:
+        raise ValueError(
+            "model_type must be 'burn' or 'wound'"
+        )
+
+    _model_cache[model_type] = model
+    return model
+
+
+# ============================================================
 # RUN INFERENCE
 # ============================================================
 
@@ -86,11 +117,9 @@ def predict(image_path, model_type):
         )
 
     if model_type == "burn":
-        model_path = BURN_MODEL
         class_names = BURN_CLASSES
 
     elif model_type == "wound":
-        model_path = WOUND_MODEL
         class_names = WOUND_CLASSES
 
     else:
@@ -98,8 +127,8 @@ def predict(image_path, model_type):
             "model_type must be 'burn' or 'wound'"
         )
 
-    # Load model
-    model = load_model(model_path)
+    # Load model (cached after the first call — see get_model())
+    model = get_model(model_type)
 
     # Run YOLO inference
     results = model(

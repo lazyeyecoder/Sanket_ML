@@ -648,7 +648,130 @@ yolov5/
 
 This package contains the trained burn and wound models and the inference interface required for backend integration.
 
+---
+
+# 15. ML Service (camera → YOLO → triage → RAG → SLM)
+
+`service/app.py` is a FastAPI wrapper around `inference.py` that loads both
+models once at startup and adds the triage/RAG/SLM pipeline used by the
+SANKET app's camera-capture flow. The Convex backend cannot run this
+directly (no Python/torch runtime), so the app calls this service over
+HTTP on the local network instead — see `sanket-app/src/lib/ml-client.ts`.
+
+## Install and run
+
+```powershell
+cd Sanket_ML
+pip install -r requirements.txt
+python -m rag.build_index          # builds the local FAISS index (run once, or after editing rag/docs/*.md)
+python -m uvicorn service.app:app --host 0.0.0.0 --port 8000
 ```
+
+Find your machine's LAN IP (`ipconfig`, look for IPv4 Address) and set it
+in `sanket-app/.env.local` as `EXPO_PUBLIC_ML_SERVICE_URL=http://<that-ip>:8000`
+so a phone/emulator on the same network can reach it.
+
+## Endpoints
+
+- `GET /health` — `{status, cuda_available, gpu, models_loaded}`
+- `POST /predict` — `{model_type, image_base64}` → same detection JSON documented in §7 above
+- `POST /triage` — `{model_type, class_name, confidence, answers}` → conservative urgency + pending follow-up questions (§4-style rules, no numeric severity score)
+- `POST /guidance` — `{model_type, class_name, confidence, answers, kit_available}` → `{triage, guidance, pending_questions}`, where `guidance` follows:
+  ```json
+  {
+    "title": "...", "urgency": "...", "summary": "...",
+    "steps": [{"step": 1, "instruction": "...", "source": "..."}],
+    "red_flags": [], "sources": [], "grounded": true, "generated_by": "template | ollama:<model> | safety_fallback"
+  }
+  ```
+
+## RAG corpus
+
+`rag/docs/*.md` holds short, cited excerpts from WHO/Red Cross/Mayo
+Clinic/NHS first-aid guidance (burns, bleeding, minor wound care, chronic
+wounds, shock, general red flags) — not full manuals. `rag/build_index.py`
+chunks each `## heading` section, embeds with
+`sentence-transformers/all-MiniLM-L6-v2`, and writes a local FAISS index
+under `rag/index/` (gitignored — rebuild it locally). Add more `.md` files
+and re-run the build script to extend the corpus.
+
+## SLM (optional, local)
+
+If [Ollama](https://ollama.com) is installed and running locally with a
+small model pulled (`ollama pull qwen2.5:1.5b-instruct`), `/guidance` uses
+it to phrase retrieved evidence into steps, strictly grounded (it cannot
+use its own medical knowledge, and any step whose cited source wasn't
+actually retrieved is discarded). **Without Ollama, `/guidance` still
+works** — it falls back to a deterministic template that assembles the
+retrieved evidence directly into numbered steps with no generation at
+all, so the demo works out of the box either way.
+
+---
+
+# 16. Troubleshooting
+
+## `torch.cuda.is_available()` is `False` after installing requirements
+
+`pip install torch` (no index URL) installs the CPU-only build even on a
+machine with an NVIDIA GPU, because a bare `torch` requirement is
+satisfied by whatever's already installed — pip ignores the `+cpu` /
+`+cu130` local-version tag. Fix:
+
+```powershell
+# check your driver's max supported CUDA version first
+nvidia-smi
+# then install the matching build (cu126/cu128/cu130/... depending on your driver)
+pip install torch --index-url https://download.pytorch.org/whl/cu130 --force-reinstall --no-deps
+```
+
+## `NotImplementedError: Could not run 'torchvision::nms' with arguments from the 'CUDA' backend`
+
+This means `torch` is a CUDA build but `torchvision` is still the CPU
+build (or a mismatched CUDA version) — they must match. Fix the same way:
+
+```powershell
+pip install torchvision --index-url https://download.pytorch.org/whl/cu130 --force-reinstall --no-deps
+```
+
+## `rag/build_index.py` or the service crashes importing `sentence_transformers` because of `torchaudio`
+
+If another project on the same machine has `torchaudio` installed and it
+doesn't have a build matching your (possibly very new) `torch` version,
+`transformers` (a `sentence-transformers` dependency) fails hard trying
+to import it — even though embedding plain text never touches audio.
+`rag/_torchaudio_shim.py` already works around this automatically (it
+stubs out `torchaudio` in-process only, if the real import fails); you
+don't need to do anything, and it does **not** touch your system's
+`torchaudio` install. If you see this error anyway, check that
+`build_index.py`/`retriever.py` still import the shim before
+`sentence_transformers` — see either file for the exact spot.
+
+## `Inference failed: No module named 'pi_heif'` from `/predict`
+
+This happens when the uploaded bytes genuinely aren't a decodable image
+(Pillow tries — and fails to import — an optional HEIF plugin while
+probing the format). A real photo from a phone camera won't hit this.
+The service still returns a clean JSON error rather than crashing; if
+you want HEIF photos to work, `pip install pillow-heif`.
+
+## Harmless warnings you can ignore
+
+- `Warning: You are sending unauthenticated requests to the HF Hub` — the
+  embedding model download is public; set `HF_TOKEN` only if you're
+  hitting rate limits.
+- `huggingface_hub cache-system uses symlinks by default...` — a Windows
+  symlink permissions notice; the cache still works, just slightly less
+  space-efficiently.
+- `WARNING: The script uvicorn.exe is installed in '...\Scripts' which is
+  not on PATH` — harmless; run the service with `python -m uvicorn ...`
+  (as documented above) instead of the bare `uvicorn` command, which
+  sidesteps this entirely and also avoids accidentally picking up a
+  *different* Python environment's `uvicorn.exe` that doesn't have torch
+  installed.
+
+```
+
+
 
 One thing I deliberately removed from the old version is the repeated setup/inference material. Your previous README had the same instructions appearing in multiple sections, plus a teammate message embedded inside the documentation, which is how documentation slowly turns into a junk drawer. The version above has one clean path: **structure → requirements → clone YOLOv5 → install → models → run → output → backend integration → testing**. :contentReference[oaicite:1]{index=1}
 ```

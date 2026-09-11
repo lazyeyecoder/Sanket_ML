@@ -1,0 +1,11 @@
+## Red flags that always mean call emergency services now
+Call emergency services immediately, before doing anything else, if the person: is unconscious or cannot be woken; is not breathing normally or is struggling to breathe; has heavy bleeding that does not stop with direct pressure; shows signs of shock (see shock.md); has a burn on the face, airway area, hands, feet, genitals, or a major joint, or any burn larger than the person's palm, or a burn that looks deep/white/leathery/charred. When in doubt about severity, call for help rather than waiting.
+Source: Compiled from British Red Cross "First aid for burns" and American Red Cross "Bleeding (Life-Threatening External)" and "Shock" pages — https://www.redcross.org.uk/first-aid/learn-first-aid/burns , https://www.redcross.org/take-a-class/resources/learn-first-aid/bleeding-life-threatening-external , https://www.redcross.org/take-a-class/resources/learn-first-aid/shock
+
+## Scene safety before helping
+Before approaching an injured person, make sure the scene itself is safe — check for traffic, fire, electrical hazards, unstable structures, or anything else that could injure you too. Protecting yourself first means you can actually help; becoming a second casualty helps no one. If you have disposable gloves, use them before touching a wound or blood.
+Source: General first-aid scene-safety principle consistent with American Red Cross bleeding-control guidance — https://www.redcross.org/take-a-class/resources/learn-first-aid/bleeding-life-threatening-external
+
+## Do not do these things
+Do not give an injured or unconscious person food, water, or medication by mouth. Do not attempt to remove an object embedded in a wound. Do not apply a tourniquet unless you are trained to. Do not move someone with a suspected head, neck, or back injury unless they are in immediate danger where they are. Do not apply ice, butter, oils, or toothpaste to a burn, and do not use adhesive dressings directly on a burn.
+Source: Compiled from American Red Cross "Shock" and "Bleeding (Life-Threatening External)", and British Red Cross "First aid for burns" — https://www.redcross.org/take-a-class/resources/learn-first-aid/shock , https://www.redcross.org/take-a-class/resources/learn-first-aid/bleeding-life-threatening-external , https://www.redcross.org.uk/first-aid/learn-first-aid/burns

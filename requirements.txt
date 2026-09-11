@@ -8,3 +8,10 @@ requests
 pandas
 matplotlib
 seaborn
+
+# --- SANKET ML service (service/app.py) + RAG/SLM pipeline ---
+fastapi
+uvicorn[standard]
+python-multipart
+sentence-transformers
+faiss-cpu
