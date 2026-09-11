@@ -8,6 +8,12 @@
       ],
       "@/assets/*": [
         "./assets/*"
+      ],
+      "@convex/*": [
+        "./convex/*"
+      ],
+      "@components/*": [
+        "./components/*"
       ]
     }
   },
@@ -16,5 +22,8 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts"
+  ],
+  "exclude": [
+    "example"
   ]
 }
