@@ -10,6 +10,12 @@ export const createIncident = mutation({
     lng: v.number(),
     type: v.string(),
     severity: v.union(v.literal("low"), v.literal("medium"), v.literal("high")),
+    detectedClass: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    urgency: v.optional(v.string()),
+    detectedBy: v.optional(v.string()),
+    language: v.optional(v.string()),
+    guidance: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -22,8 +28,28 @@ export const createIncident = mutation({
       severity: args.severity,
       status: "open",
       createdAt: Date.now(),
+      detectedClass: args.detectedClass,
+      confidence: args.confidence,
+      urgency: args.urgency,
+      detectedBy: args.detectedBy,
+      language: args.language,
+      guidance: args.guidance,
     });
     return incidentId;
+  },
+});
+
+// The signed-in user's own reports, newest first (shown under Profile).
+export const listMyIncidents = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (userId === null) return [];
+    return await ctx.db
+      .query("incidents")
+      .withIndex("by_reporter", (q) => q.eq("reporterId", userId))
+      .order("desc")
+      .take(50);
   },
 });
 

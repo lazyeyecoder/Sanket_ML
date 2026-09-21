@@ -12,6 +12,8 @@
  * throws — callers render an error state instead of crashing.
  */
 
+import type { Language } from "@/i18n";
+
 const BASE_URL = process.env.EXPO_PUBLIC_ML_SERVICE_URL;
 
 export type ModelType = "burn" | "wound";
@@ -62,7 +64,8 @@ export type Guidance = {
   red_flags: string[];
   sources: string[];
   grounded: boolean;
-  generated_by: string;
+  generation_method: string; // "retrieval+template" | "safety_fallback" | "no_detection"
+  language?: string;
 };
 
 export type GuidanceResponse = {
@@ -124,12 +127,14 @@ export function getTriage(
   className: string | null,
   confidence: number | null,
   answers: Answers,
+  language: Language = "en",
 ) {
   return post<TriageResult>("/triage", {
     model_type: modelType,
     class_name: className,
     confidence,
     answers,
+    language,
   });
 }
 
@@ -139,6 +144,7 @@ export function getGuidance(
   confidence: number | null,
   answers: Answers,
   kitAvailable: boolean | null,
+  language: Language = "en",
 ) {
   return post<GuidanceResponse>("/guidance", {
     model_type: modelType,
@@ -146,5 +152,6 @@ export function getGuidance(
     confidence,
     answers,
     kit_available: kitAvailable,
+    language,
   });
 }

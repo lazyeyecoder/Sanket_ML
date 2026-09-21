@@ -32,6 +32,14 @@ export default defineSchema({
     status: v.union(v.literal("open"), v.literal("accepted"), v.literal("resolved")),
     createdAt: v.number(),
     acceptedBy: v.optional(v.id("users")),
+    // Saved analysis (camera -> detection -> guidance flow). All optional so
+    // older incidents and the other emergency types (no photo) still fit.
+    detectedClass: v.optional(v.string()), // model class id, e.g. "second_degree_burn"
+    confidence: v.optional(v.number()), // model confidence 0..1 (NOT severity)
+    urgency: v.optional(v.string()), // triage: low | medium | high | unable_to_determine
+    detectedBy: v.optional(v.string()), // "on-device" | "server"
+    language: v.optional(v.string()), // language the guidance was shown in
+    guidance: v.optional(v.string()), // JSON of the structured guidance, to re-open it later
   })
     .index("by_status", ["status"])
     .index("by_reporter", ["reporterId"]),

@@ -7,29 +7,45 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { colors, radius, spacing, typography } from "@/constants/theme";
 import { EmergencyType, firstAidSteps } from "@/data/firstAid";
+import { useLanguage } from "@/hooks/useLanguage";
+import { Language, t } from "@/i18n";
 import { Guidance } from "@/lib/ml-client";
+import { pickSpeechLocale, SpeechChoice } from "@/lib/speech";
 
 // A step shape both the static (mocked, non-ML emergency types) and the
 // real grounded-guidance (burn/wound) paths can render identically.
 type DisplayStep = { text: string; source?: string };
 
 export default function FirstAidSteps() {
-  const params = useLocalSearchParams<{ incidentId?: string; type: EmergencyType; guidance?: string }>();
+  const params = useLocalSearchParams<{ incidentId?: string; type: EmergencyType; guidance?: string; from?: string }>();
   const type = (params.type ?? "general") as EmergencyType;
+  const profileLanguage = useLanguage();
 
   const guidance: Guidance | null = params.guidance ? JSON.parse(params.guidance) : null;
+  // The steps are in whatever language the guidance was requested in; use
+  // that for speech. UI labels follow the current profile language.
+  const guidanceLanguage = ((guidance?.language as Language | undefined) ?? profileLanguage) as Language;
 
   const steps: DisplayStep[] = guidance
     ? guidance.steps.map((s) => ({ text: s.instruction, source: s.source }))
     : (firstAidSteps[type] ?? firstAidSteps.general).map((text) => ({ text }));
 
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+  const [speech, setSpeech] = useState<SpeechChoice | null>(null);
+
+  // Static (non-ML) steps are English; everything else follows the guidance language.
+  const speechLanguage: Language = guidance ? guidanceLanguage : "en";
 
   useEffect(() => {
+    let cancelled = false;
+    pickSpeechLocale(speechLanguage).then((choice) => {
+      if (!cancelled) setSpeech(choice);
+    });
     return () => {
+      cancelled = true;
       Speech.stop();
     };
-  }, []);
+  }, [speechLanguage]);
 
   const playStep = (index: number) => {
     Speech.stop();
@@ -38,26 +54,40 @@ export default function FirstAidSteps() {
       return;
     }
     setPlayingIndex(index);
+    const done = () => setPlayingIndex((current) => (current === index ? null : current));
     Speech.speak(steps[index].text, {
-      onDone: () => setPlayingIndex((current) => (current === index ? null : current)),
-      onStopped: () => setPlayingIndex((current) => (current === index ? null : current)),
-      onError: () => setPlayingIndex((current) => (current === index ? null : current)),
+      language: speech?.locale,
+      onDone: done,
+      onStopped: done,
+      onError: done,
     });
   };
+
+  // Clear the whole report flow (so the next report starts fresh), then go
+  // to Home — or back to Profile if this was opened from "My reports".
+  const finish = () => {
+    Speech.stop();
+    router.dismissAll();
+    router.navigate(params.from === "profile" ? "/(citizen)/profile" : "/(citizen)");
+  };
+
+  const bannerLabel = !guidance
+    ? t(profileLanguage, "bannerStatic")
+    : guidance.grounded
+      ? t(profileLanguage, "bannerSourced")
+      : t(profileLanguage, "bannerCaution");
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.banner}>
-        <Text style={styles.bannerLabel}>
-          {guidance ? guidance.generated_by.toUpperCase().replace(/_/g, " ") : "VERIFIED FIRST-AID STEPS"}
-        </Text>
+        <Text style={styles.bannerLabel}>{bannerLabel}</Text>
         <Text style={styles.bannerTitle}>{(guidance?.title ?? type).replace(/_/g, " ").toUpperCase()}</Text>
         {guidance?.summary ? <Text style={styles.bannerSummary}>{guidance.summary}</Text> : null}
       </View>
 
       {guidance && guidance.red_flags.length > 0 && (
         <Card style={styles.redFlagCard}>
-          <Text style={styles.redFlagTitle}>⚠ Red flags</Text>
+          <Text style={styles.redFlagTitle}>{t(profileLanguage, "redFlags")}</Text>
           {guidance.red_flags.map((flag, i) => (
             <Text key={i} style={styles.redFlagText}>
               • {flag}
@@ -66,12 +96,11 @@ export default function FirstAidSteps() {
         </Card>
       )}
 
+      {speech?.fellBack && <Text style={styles.voiceNote}>{t(profileLanguage, "voiceFallbackNote")}</Text>}
+
       {steps.length === 0 && (
         <Card style={styles.stepCard}>
-          <Text style={styles.stepText}>
-            Not enough verified local guidance was found for this. Please seek professional medical
-            help.
-          </Text>
+          <Text style={styles.stepText}>{t(profileLanguage, "noGuidance")}</Text>
         </Card>
       )}
 
@@ -83,9 +112,13 @@ export default function FirstAidSteps() {
             </View>
             <Text style={styles.stepText}>{step.text}</Text>
           </View>
-          {step.source && <Text style={styles.stepSource}>Source: {step.source}</Text>}
+          {step.source && (
+            <Text style={styles.stepSource}>
+              {t(profileLanguage, "source")}: {step.source}
+            </Text>
+          )}
           <Button
-            title={playingIndex === index ? "🔊 Playing…" : "▶ Play"}
+            title={t(profileLanguage, playingIndex === index ? "playing" : "play")}
             variant="outline"
             onPress={() => playStep(index)}
             style={styles.playButton}
@@ -94,7 +127,7 @@ export default function FirstAidSteps() {
       ))}
 
       <Button
-        title="View on Map"
+        title={t(profileLanguage, "viewOnMap")}
         onPress={() =>
           router.push({
             pathname: "/(citizen)/report/map",
@@ -104,9 +137,9 @@ export default function FirstAidSteps() {
         style={styles.mapButton}
       />
       <Button
-        title="Done"
+        title={t(profileLanguage, "done")}
         variant="outline"
-        onPress={() => router.dismissTo("/(citizen)")}
+        onPress={finish}
         style={styles.doneButton}
       />
     </ScrollView>
@@ -128,6 +161,7 @@ const styles = StyleSheet.create({
   redFlagCard: { backgroundColor: "#FDEDEE", marginBottom: spacing.md },
   redFlagTitle: { fontWeight: "800", color: colors.red, marginBottom: spacing.xs },
   redFlagText: { color: colors.red, fontSize: 14, marginTop: 2 },
+  voiceNote: { ...typography.caption, marginBottom: spacing.md },
   stepCard: { marginBottom: spacing.md },
   stepRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
   stepNumber: {

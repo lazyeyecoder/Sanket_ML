@@ -8,7 +8,10 @@ import { Card } from "@/components/ui/Card";
 import { ScreenHeader } from "@/components/ui/ScreenHeader";
 import { colors, radius, spacing, typography } from "@/constants/theme";
 import { EmergencyType } from "@/data/firstAid";
-import { analyzeImage, ModelType } from "@/lib/ml-client";
+import { useLanguage } from "@/hooks/useLanguage";
+import { t } from "@/i18n";
+import { analyzeImage, Detection, ModelType } from "@/lib/ml-client";
+import { detectOnDevice, ON_DEVICE_SUPPORTED } from "@/lib/ondevice";
 
 // injury/bleeding both go to the wound model; burn goes to the burn model.
 // (report/index.tsx only routes here for these three types — see there.)
@@ -20,6 +23,7 @@ export default function Capture() {
   const params = useLocalSearchParams<{ type: string; description?: string }>();
   const type = (params.type ?? "injury") as EmergencyType;
   const modelType = modelForType(type);
+  const language = useLanguage();
 
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -32,11 +36,7 @@ export default function Capture() {
       : await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
-      setError(
-        fromCamera
-          ? "Camera permission is needed to take a photo. You can still choose one from your gallery."
-          : "Photo library permission is needed to choose an image.",
-      );
+      setError(t(language, fromCamera ? "errCameraPermission" : "errLibraryPermission"));
       return;
     }
 
@@ -54,21 +54,43 @@ export default function Capture() {
 
     const asset = result.assets[0];
     if (!asset.base64) {
-      setError("Couldn't read that image. Please try again.");
+      setError(t(language, "errReadImage"));
       return;
     }
 
     setImageUri(asset.uri);
     setAnalyzing(true);
 
-    const analysis = await analyzeImage(asset.base64, modelType);
+    // Detection runs on the phone first (no network needed). The server is
+    // only a fallback if on-device isn't available (web) or fails.
+    let detections: Detection[] | null = null;
+    let width = asset.width;
+    let height = asset.height;
+    let detectedBy: "on-device" | "server" = "server";
+
+    if (ON_DEVICE_SUPPORTED) {
+      try {
+        const local = await detectOnDevice(asset.uri, modelType);
+        detections = local.detections;
+        width = local.width;
+        height = local.height;
+        detectedBy = "on-device";
+      } catch (e) {
+        console.warn("[SANKET] on-device detection failed, falling back to server:", e);
+      }
+    }
+
+    if (!detections) {
+      const analysis = await analyzeImage(asset.base64, modelType);
+      if (!analysis.ok) {
+        setAnalyzing(false);
+        setError(analysis.error);
+        return;
+      }
+      detections = analysis.data.detections;
+    }
 
     setAnalyzing(false);
-
-    if (!analysis.ok) {
-      setError(analysis.error);
-      return;
-    }
 
     router.push({
       pathname: "/(citizen)/report/result",
@@ -77,9 +99,10 @@ export default function Capture() {
         description: params.description ?? "",
         modelType,
         imageUri: asset.uri,
-        imageWidth: String(asset.width),
-        imageHeight: String(asset.height),
-        detections: JSON.stringify(analysis.data.detections),
+        imageWidth: String(width),
+        imageHeight: String(height),
+        detections: JSON.stringify(detections),
+        detectedBy,
       },
     });
   };
@@ -87,8 +110,8 @@ export default function Capture() {
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <ScreenHeader
-        title={type === "burn" ? "Photograph the Burn" : "Photograph the Wound"}
-        subtitle="Get the injury clearly in frame, with good light if possible."
+        title={t(language, type === "burn" ? "photographBurn" : "photographWound")}
+        subtitle={t(language, "captureSubtitle")}
         showBack
       />
 
@@ -97,7 +120,7 @@ export default function Capture() {
           <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="cover" />
         ) : (
           <View style={styles.placeholder}>
-            <Text style={styles.placeholderText}>No photo yet</Text>
+            <Text style={styles.placeholderText}>{t(language, "noPhotoYet")}</Text>
           </View>
         )}
       </Card>
@@ -105,7 +128,7 @@ export default function Capture() {
       {analyzing && (
         <View style={styles.analyzingRow}>
           <ActivityIndicator color={colors.teal} />
-          <Text style={styles.analyzingText}>Analyzing…</Text>
+          <Text style={styles.analyzingText}>{t(language, "analyzing")}</Text>
         </View>
       )}
 
@@ -116,13 +139,13 @@ export default function Capture() {
       )}
 
       <Button
-        title="📷 Take Photo"
+        title={t(language, "takePhoto")}
         onPress={() => capture(true)}
         disabled={analyzing}
         style={styles.button}
       />
       <Button
-        title="Choose from Gallery"
+        title={t(language, "chooseGallery")}
         variant="outline"
         onPress={() => capture(false)}
         disabled={analyzing}
