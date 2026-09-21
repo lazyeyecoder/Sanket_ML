@@ -16,6 +16,8 @@ breathing / size / location), never invented from the class name alone.
 
 from typing import Optional, TypedDict
 
+from labels import triage_labels
+
 
 class Answers(TypedDict, total=False):
     heavy_bleeding: Optional[bool]
@@ -79,25 +81,27 @@ def _escalate(current: str, candidate: str) -> str:
     return current
 
 
-def _red_flags_from_answers(answers: Answers) -> list[str]:
+def _red_flags_from_answers(answers: Answers, lang: str = "en") -> list[str]:
+    L = triage_labels(lang)
     flags = []
     if answers.get("heavy_bleeding") is True:
-        flags.append("Heavy or uncontrolled bleeding reported.")
+        flags.append(L["red_flag_heavy_bleeding"])
     if answers.get("conscious") is False:
-        flags.append("Person is not conscious/responsive.")
+        flags.append(L["red_flag_unconscious"])
     if answers.get("breathing_normal") is False:
-        flags.append("Breathing is not normal.")
+        flags.append(L["red_flag_breathing"])
     return flags
 
 
-def next_questions(answers: Answers) -> list[dict]:
+def next_questions(answers: Answers, lang: str = "en") -> list[dict]:
     """Which follow-up questions still need an answer, next round only."""
+    texts = triage_labels(lang)["questions"]
     unanswered = [q for q in FOLLOW_UP_QUESTIONS if answers.get(q["key"]) is None]
-    return unanswered[:QUESTIONS_PER_ROUND]
+    return [dict(q, text=texts.get(q["key"], q["text"])) for q in unanswered[:QUESTIONS_PER_ROUND]]
 
 
 def assess(model_type: str, class_name: Optional[str], confidence: Optional[float],
-           answers: Optional[Answers] = None) -> dict:
+           answers: Optional[Answers] = None, lang: str = "en") -> dict:
     """
     Returns:
         {
@@ -130,7 +134,7 @@ def assess(model_type: str, class_name: Optional[str], confidence: Optional[floa
             "determine urgency — waiting on follow-up answers."
         )
 
-    red_flags = _red_flags_from_answers(answers)
+    red_flags = _red_flags_from_answers(answers, lang)
     if red_flags:
         urgency = _escalate(urgency, "high")
         basis.append("Escalated to 'high' due to reported red flag(s).")
@@ -141,16 +145,12 @@ def assess(model_type: str, class_name: Optional[str], confidence: Optional[floa
         urgency = _escalate(urgency, step_up[urgency])
         basis.append("Escalated one level: large area or a critical body location was reported.")
 
-    pending = next_questions(answers)
+    pending = next_questions(answers, lang)
 
     return {
         "urgency": urgency,
         "basis": basis,
         "red_flags": red_flags,
-        "disclaimer": (
-            "This is a conservative estimate from a single image and a few "
-            "questions — it cannot determine complete medical severity. "
-            "When in doubt, seek professional medical help."
-        ),
+        "disclaimer": triage_labels(lang)["disclaimer"],
         "pending_questions": pending,
     }

@@ -1,0 +1,8 @@
+# Third-party checkout users clone themselves (see Sanket_ML/README.md)
+yolov5/
+
+__pycache__/
+*.pyc
+node_modules/
+.env*.local
+.expo/

@@ -33,8 +33,9 @@ if str(BASE_DIR) not in sys.path:
 
 import inference  # noqa: E402  (Sanket_ML/inference.py, unmodified predict() logic)
 import triage  # noqa: E402
-import slm  # noqa: E402
-from rag.retriever import retrieve as rag_retrieve, RetrievalUnavailable  # noqa: E402
+import composer  # noqa: E402
+from labels import CLASS_QUERY  # noqa: E402
+from rag.retriever import retrieve as rag_retrieve, doc_chunks, RetrievalUnavailable  # noqa: E402
 
 app = FastAPI(title="SANKET ML Service")
 
@@ -115,19 +116,18 @@ def predict(req: PredictRequest):
 
 
 def _build_rag_query(model_type: str, class_name: Optional[str], answers: dict) -> str:
-    parts = []
-    if class_name:
-        parts.append(f"first aid steps for {class_name.replace('_', ' ').lower()}")
-    else:
-        parts.append(f"first aid for a {model_type} injury, no clear detection")
-    cause = answers.get("cause")
-    if cause:
-        parts.append(f"caused by {cause}")
+    """English retrieval query (the index is English-only)."""
+    parts = [CLASS_QUERY.get(class_name or "", f"first aid for a {model_type} injury")]
     if answers.get("heavy_bleeding"):
-        parts.append("heavy bleeding")
+        parts.append("heavy bleeding press firmly")
+    elif answers.get("heavy_bleeding") is False and class_name in ("Cut_Wound", "Laseration_Wound"):
+        parts.append("minor wound rinse and clean")
     if answers.get("conscious") is False or answers.get("breathing_normal") is False:
-        parts.append("unconscious or not breathing normally, shock")
+        parts.append("unconscious not breathing call emergency services")
     return " ".join(parts)
+
+
+SUPPORTED_LANGUAGES = ("en", "hi", "mr")
 
 
 class TriageRequest(BaseModel):
@@ -135,6 +135,7 @@ class TriageRequest(BaseModel):
     class_name: str | None = None
     confidence: float | None = None
     answers: dict = Field(default_factory=dict)
+    language: str = "en"
 
 
 @app.post("/triage")
@@ -142,7 +143,8 @@ def triage_endpoint(req: TriageRequest):
     if req.model_type not in ("burn", "wound"):
         return {"error": "model_type must be 'burn' or 'wound'"}
     try:
-        return triage.assess(req.model_type, req.class_name, req.confidence, req.answers)
+        lang = req.language if req.language in SUPPORTED_LANGUAGES else "en"
+        return triage.assess(req.model_type, req.class_name, req.confidence, req.answers, lang)
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         return {"error": f"Triage failed: {exc}"}
@@ -154,56 +156,57 @@ class GuidanceRequest(BaseModel):
     confidence: float | None = None
     answers: dict = Field(default_factory=dict)
     kit_available: bool | None = None
+    language: str = "en"
 
 
 @app.post("/guidance")
 def guidance_endpoint(req: GuidanceRequest):
     """
-    visual result + answers + kit availability -> triage -> RAG -> SLM
-    -> structured guidance (README §5/§8). Each stage is isolated so a
-    failure in one degrades gracefully instead of crashing the request
-    (README §11): RAG failure or an empty index -> safe fallback
-    message, never fabricated advice; SLM failure -> the grounded
-    template steps are shown instead (handled inside slm.py already).
+    visual result + answers + kit availability -> triage -> retrieval ->
+    template composer -> structured guidance. No language model is in
+    the loop: every step is a bullet from a retrieved, cited document
+    chunk (see composer.py). Each stage degrades to the safe
+    "seek professional medical help" response instead of guessing.
     """
     if req.model_type not in ("burn", "wound"):
         return {"error": "model_type must be 'burn' or 'wound'"}
+    lang = req.language if req.language in SUPPORTED_LANGUAGES else "en"
 
     try:
-        triage_result = triage.assess(req.model_type, req.class_name, req.confidence, req.answers)
+        triage_result = triage.assess(req.model_type, req.class_name, req.confidence, req.answers, lang)
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         return {"error": f"Triage failed: {exc}"}
 
-    query = _build_rag_query(req.model_type, req.class_name, req.answers)
+    def respond(guidance: dict):
+        return {
+            "triage": triage_result,
+            "guidance": guidance,
+            "pending_questions": triage_result["pending_questions"],
+        }
+
+    def fallback(reason: str):
+        return respond(composer.safe_fallback(
+            lang, reason, urgency=triage_result["urgency"], red_flags=triage_result["red_flags"]))
 
     try:
-        chunks = rag_retrieve(query, k=5)
-    except RetrievalUnavailable as exc:
-        # No local index / docs — do NOT let the SLM guess (§7/§11).
-        guidance = dict(slm.SAFE_FALLBACK)
-        guidance["summary"] = f"Local medical reference index is unavailable ({exc}). Seek professional medical help."
-        guidance["urgency"] = triage_result["urgency"]
-        guidance["red_flags"] = triage_result["red_flags"]
-        return {"triage": triage_result, "guidance": guidance, "pending_questions": triage_result["pending_questions"]}
-    except Exception as exc:  # noqa: BLE001
+        if req.class_name is None:
+            # nothing detected: general, sourced safety guidance
+            chunks = [dict(c, score=1.0) for c in doc_chunks("general_emergency", lang)]
+        else:
+            chunks = rag_retrieve(_build_rag_query(req.model_type, req.class_name, req.answers), k=8, lang=lang)
+    except RetrievalUnavailable:
+        return fallback("no_index")
+    except Exception:  # noqa: BLE001
         traceback.print_exc()
-        guidance = dict(slm.SAFE_FALLBACK)
-        guidance["summary"] = "Retrieval failed unexpectedly. Seek professional medical help."
-        guidance["urgency"] = triage_result["urgency"]
-        return {"triage": triage_result, "guidance": guidance, "pending_questions": triage_result["pending_questions"]}
+        return fallback("error")
 
-    title = (req.class_name or f"{req.model_type} injury").replace("_", " ").title()
     try:
-        guidance = slm.compose_guidance(title, triage_result, chunks, req.kit_available)
-    except Exception as exc:  # noqa: BLE001
+        guidance = composer.compose_guidance(
+            req.class_name, triage_result, chunks,
+            lambda doc: doc_chunks(doc, lang), req.kit_available, lang)
+    except Exception:  # noqa: BLE001
         traceback.print_exc()
-        guidance = dict(slm.SAFE_FALLBACK)
-        guidance["summary"] = "Guidance generation failed unexpectedly. Seek professional medical help."
-        guidance["urgency"] = triage_result["urgency"]
+        return fallback("error")
 
-    return {
-        "triage": triage_result,
-        "guidance": guidance,
-        "pending_questions": triage_result["pending_questions"],
-    }
+    return respond(guidance)
